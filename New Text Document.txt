@@ -1,0 +1,10 @@
+disucss.kesug.com
+password; ISobfaF8ZI
+
+echo "# Discuss" >> README.md
+git init
+git add README.md
+git commit -m "first commit"
+git branch -M main
+git remote add origin https://github.com/Mujtaba-Ali-07/Discuss.git
+git push -u origin main

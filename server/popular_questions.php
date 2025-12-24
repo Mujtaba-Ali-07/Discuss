@@ -1,0 +1,184 @@
+<?php
+include './common/db.php';
+
+// Fetch all questions with user info and like count in POPULAR order (most likes first)
+$query = "
+    SELECT 
+        q.*, 
+        u.username,
+        u.id as user_id,
+        COUNT(DISTINCT ql.id) as like_count,
+        COUNT(DISTINCT c.id) as comment_count
+    FROM questions q 
+    LEFT JOIN users u ON q.user_id = u.id 
+    LEFT JOIN question_likes ql ON q.id = ql.question_id 
+    LEFT JOIN comments c ON q.id = c.question_id 
+    GROUP BY q.id 
+    ORDER BY like_count DESC, comment_count DESC, q.created_at DESC
+";
+
+$result = $conn->query($query);
+
+if ($result->num_rows > 0) {
+    $rank = 0;
+    while ($question = $result->fetch_assoc()) {
+        $rank++;
+        // Get asker's profile picture for this question
+        $profile_stmt = $conn->prepare("SELECT profile_picture FROM users WHERE id = ?");
+        $profile_stmt->bind_param("i", $question['user_id']);
+        $profile_stmt->execute();
+        $profile_result = $profile_stmt->get_result();
+        $profile_data = $profile_result->fetch_assoc();
+
+        $asker_profile_pic = !empty($profile_data['profile_picture'])
+            ? "./public/uploads/" . $profile_data['profile_picture']
+            : "./public/default-avatar.png";
+
+        // Determine popularity badge
+        $badge_class = "bg-secondary";
+        $badge_text = "#" . $rank;
+
+        if ($rank == 1) {
+            $badge_class = "bg-warning text-dark";
+            $badge_text = "🥇 #1";
+        } elseif ($rank == 2) {
+            $badge_class = "bg-secondary";
+            $badge_text = "🥈 #2";
+        } elseif ($rank == 3) {
+            $badge_class = "bg-danger";
+            $badge_text = "🥉 #3";
+        }
+?>
+        <div class='card mb-3'>
+            <div class='card-body'>
+                <div class="d-flex justify-content-between align-items-start">
+                    <h5 class='card-title'><?php echo htmlspecialchars($question['title']); ?></h5>
+                    <span class="badge <?php echo $badge_class; ?> ms-2"><?php echo $badge_text; ?></span>
+                </div>
+                <p class='card-text'><?php echo htmlspecialchars($question['description']); ?></p>
+
+                <div class='d-flex justify-content-between align-items-center'>
+                    <small class='text-muted'>
+                        <div class='d-flex align-items-center'>
+                            <img src="<?php echo $asker_profile_pic; ?>"
+                                class="rounded-circle me-2"
+                                alt="User"
+                                style="width: 24px; height: 24px; object-fit: cover;">
+                            Asked by: <?php echo htmlspecialchars($question['username']); ?> |
+                            <?php echo date('M j, Y g:i A', strtotime($question['created_at'])); ?>
+                        </div>
+                    </small>
+
+                    <div class='btn-group'>
+                        <!-- Like Button -->
+                        <button type='button' class='btn btn-sm btn-outline-primary like-btn'
+                            data-question-id='<?php echo $question['id']; ?>'>
+                            <span class="like-icon">👍</span>
+                            <span class="like-count"><?php echo $question['like_count']; ?></span>
+                        </button>
+
+                        <!-- Comment Button -->
+                        <button type='button' class='btn btn-sm btn-outline-secondary comment-toggle-btn'
+                            data-bs-toggle='collapse'
+                            data-bs-target='#comments<?php echo $question['id']; ?>'>
+                            💬 <span class="comment-count"><?php echo $question['comment_count']; ?></span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Popularity Metrics -->
+                <div class='mt-2'>
+                    <div class='progress' style='height: 8px;'>
+                        <?php
+                        // Store max likes for progress bar
+                        $max_likes_query = $conn->query("SELECT MAX(like_count) as max_likes FROM (SELECT COUNT(*) as like_count FROM question_likes GROUP BY question_id) as likes");
+                        $max_likes_data = $max_likes_query->fetch_assoc();
+                        $max_likes = $max_likes_data['max_likes'] ?: 1;
+                        $like_percentage = min(100, ($question['like_count'] / $max_likes) * 100);
+                        ?>
+                        <div class='progress-bar bg-success' role='progressbar' 
+                             style='width: <?php echo $like_percentage; ?>%'
+                             data-question-id='<?php echo $question['id']; ?>'
+                             data-max-likes='<?php echo $max_likes; ?>'
+                             aria-valuenow='<?php echo $like_percentage; ?>' 
+                             aria-valuemin='0' 
+                             aria-valuemax='100'>
+                        </div>
+                    </div>
+                    <small class='text-muted'>
+                        <strong class="like-count-text"><?php echo $question['like_count']; ?></strong> likes •
+                        <strong><?php echo $question['comment_count']; ?></strong> comments •
+                        Engagement score: <strong><?php echo $question['like_count'] + $question['comment_count']; ?></strong>
+                    </small>
+                </div>
+
+                <!-- Comments Section -->
+                <div class='collapse mt-3' id='comments<?php echo $question['id']; ?>'>
+                    <div class='card card-body'>
+                        <h6>Comments:</h6>
+                        <?php
+                        // Fetch comments for this question
+                        $comment_query = "
+                            SELECT c.*, u.username, u.profile_picture 
+                            FROM comments c 
+                            LEFT JOIN users u ON c.user_id = u.id 
+                            WHERE c.question_id = ? 
+                            ORDER BY c.created_at ASC
+                        ";
+                        $comment_stmt = $conn->prepare($comment_query);
+                        $comment_stmt->bind_param("i", $question['id']);
+                        $comment_stmt->execute();
+                        $comment_result = $comment_stmt->get_result();
+                        ?>
+
+                        <div class="comments-container">
+                            <?php if ($comment_result->num_rows > 0) {
+                                while ($comment = $comment_result->fetch_assoc()) {
+                                    $commenter_profile_pic = !empty($comment['profile_picture'])
+                                        ? "./public/uploads/" . $comment['profile_picture']
+                                        : "./public/default-avatar.png";
+                            ?>
+                                    <div class='border-bottom pb-2 mb-2'>
+                                        <div class='d-flex align-items-center mb-1'>
+                                            <img src="<?php echo $commenter_profile_pic; ?>"
+                                                class="rounded-circle me-2"
+                                                alt="Commenter"
+                                                style="width: 20px; height: 20px; object-fit: cover;">
+                                            <strong><?php echo htmlspecialchars($comment['username']); ?>:</strong>
+                                        </div>
+                                        <?php echo htmlspecialchars($comment['comment_text']); ?>
+                                        <br><small class='text-muted'><?php echo date('M j, Y g:i A', strtotime($comment['created_at'])); ?></small>
+                                    </div>
+                            <?php
+                                }
+                            } else {
+                                echo "<p class='text-muted'>No comments yet.</p>";
+                            }
+                            ?>
+                        </div>
+
+                        <!-- Add comment form (only for logged in users) -->
+                        <?php if (isset($_SESSION['user']['username'])) { ?>
+                            <form method='post' class='mt-3 comment-form' data-question-id='<?php echo $question['id']; ?>'>
+                                <div class='input-group'>
+                                    <input type='text' name='comment_text' class='form-control comment-input'
+                                        placeholder='Add a comment...' required>
+                                    <button type='submit' class='btn btn-primary'>Comment</button>
+                                </div>
+                            </form>
+                        <?php } else { ?>
+                            <p class='text-muted'>Please <a href='?login=true'>login</a> to comment.</p>
+                        <?php } ?>
+                    </div>
+                </div>
+            </div>
+        </div>
+<?php
+    }
+} else {
+    echo "<div class='alert alert-info'>No questions yet. Be the first to ask a question!</div>";
+}
+
+// Close database connection
+$conn->close();
+?>
